@@ -1,0 +1,8 @@
+*.so
+*.o
+*.a
+*.log
+main
+a.out
+*.swp
+
