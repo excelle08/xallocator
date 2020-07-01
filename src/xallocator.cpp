@@ -4,6 +4,7 @@
 #include <iostream>
 #include <mutex>
 #include <cstring>
+#include <cstdio>
 
 using namespace std;
 
@@ -19,7 +20,7 @@ XAllocState *my;
 void *memory;
 
 // Define STATIC_POOLS to switch from heap blocks mode to static pools mode
-#define STATIC_POOLS 
+// #define STATIC_POOLS 
 #ifdef STATIC_POOLS
 	// Update this section as necessary if you want to use static memory pools.
 	// See also xalloc_init() and xalloc_destroy() for additional updates required.
@@ -174,38 +175,95 @@ static inline void *get_block_ptr(void* block)
 	return --pAllocatorInBlock;
 }
 
+/* Create a new secondary allocator */
+Allocator *new_secondary_allocator(size_t size)
+{
+	char *pool = my->primary.Allocate(my->blocksize);
+	if (pool == nullptr)
+		return nullptr;
+
+	Allocator *sec_allocator = my->secondaries.Allocate(sizeof(Allocator));
+	if (sec_allocator == nullptr) {
+		my->primary.Deallocate(pool);
+		return nullptr;
+	}
+
+	new (sec_allocator) Allocator(size, my->blocksize / size, pool,
+		"secondary allocator");
+}
+
+PoolListNode *new_secondary_node(size_t size, PoolListNode **nodeptr)
+{
+	PoolListNode *newnode = my->secondary_nodes.Allocate(
+		sizeof(PoolListNode)
+	);
+	/* If we can't get room for a new node, we won't be
+	 * able to get a new secondary allocator either */
+	if (newnode == nullptr)
+		return nullptr;
+	/* No need to check here because node and secondary
+	 * allocator are one-to-one corresponded, and the secondary
+	 * allocators pool can hold the same number of objects
+	 * as the secondary node pool. */
+	newnode->allocator = new_secondary_allocator(size);
+	newnode->next = nullptr;
+	*nodeptr = newnode;
+	return newnode;
+}
+
 /// Returns an allocator instance matching the size provided
 /// @param[in] size - allocator block size
 /// @return Allocator instance handling requested block size or NULL
 /// if no allocator exists. 
-static inline Allocator* find_allocator(size_t size)
+Allocator* find_allocator(size_t size)
 {
-	for (INT i=0; i<MAX_ALLOCATORS; i++)
-	{
-		if (_allocators[i] == 0)
-			break;
-		
-		if (_allocators[i]->GetBlockSize() == size)
-			return _allocators[i];
-	}
-	
-	return NULL;
-}
+	/* If the size is larger than half of the max blocksize,
+	 * let's just return the primary allocator */
+	if (size > my->blocksize / 2)
+		return &my->primary;
 
-/// Insert an allocator instance into the array
-/// @param[in] allocator - An allocator instance
-static inline void insert_allocator(Allocator* allocator)
-{
-	for (INT i=0; i<MAX_ALLOCATORS; i++)
-	{
-		if (_allocators[i] == 0)
-		{
-			_allocators[i] = allocator;
-			return;
+	PoolListHeader *chain = nullptr;
+	for (int i = 0; i < my->n_headers; ++i) {
+		if (my->secondary_headers[i] >= size) {
+			chain = my->secondary_headers + i;
+			break;
 		}
 	}
-	
-	ASSERT();
+
+	/* Return nullptr if we didn't find a matching header */
+	if (chain == nullptr)
+		return nullptr;
+
+	/* If haven't, create the first secondary allocator and return it */
+	if (chain->next == nullptr) {
+		PoolListNode *node = new_secondary_node(size, &chain->next);
+		if (node)
+			return node->allocator;
+		else
+			return nullptr;
+	}
+
+	/* Traverse through the list */
+	PoolListNode *node = chain->next;
+	while (1) {
+		/* Try to find a non-full allocator */
+		Allocator *allocator = node->allocator;
+		if (allocator->GetBlockCount() - allocator->GetBlocksInUse() > 0)
+			return allocator;
+
+		if (node->next)
+			node = node->next;
+		else
+			break;
+	}
+
+	/* If all allocators chained in this list are full,
+	 * try creating a new one */
+	PoolListNode *newnode = new_secondary_node(size, &node->next);
+	if (newnode) {
+		return newnode->allocator;
+	}
+	return nullptr;
 }
 
 /// This function must be called exactly one time *before* any other xallocator
@@ -231,6 +289,7 @@ extern "C" void xalloc_init(size_t data_capacity, size_t blocksize, void *user_p
 
 	size_t nblocks = data_capacity / blocksize;
 	/* Initialize primary allocator */
+	my->blocksize = blocksize;
 	my->primary = Allocator(blocksize, nblocks, datapool,
 				"Primary allocator");
 	/* Secondaries */
@@ -276,28 +335,8 @@ extern "C" Allocator* xallocator_get_allocator(size_t size)
 	// however some common allocator block sizes can be explicitly defined
 	// to minimize wasted storage. This offers application specific tuning.
 	size_t blockSize = size + sizeof(Allocator*);
-	if (blockSize > 256 && blockSize <= 396)
-		blockSize = 396;
-	else if (blockSize > 512 && blockSize <= 768)
-		blockSize = 768;
-	else
-		blockSize = nexthigher<size_t>(blockSize);
-
+	blockSize = nexthigher<size_t>(blockSize);
 	Allocator* allocator = find_allocator(blockSize);
-
-#ifdef STATIC_POOLS
-	ASSERT_TRUE(allocator != NULL);
-#else
-	// If there is not an allocator already created to handle this block size
-	if (allocator == NULL)  
-	{
-		// Create a new allocator to handle blocks of the size required
-		allocator = new Allocator(blockSize, 0, 0, "xallocator");
-
-		// Insert allocator into array
-		insert_allocator(allocator);
-	}
-#endif
 	
 	return allocator;
 }
@@ -312,10 +351,16 @@ extern "C" void *xmalloc(size_t size)
 
 	// Allocate a raw memory block 
 	Allocator* allocator = xallocator_get_allocator(size);
+	if (allocator == nullptr) {
+		lock_release();
+		return nullptr;
+	}
 	void* blockMemoryPtr = allocator->Allocate(sizeof(Allocator*) + size);
 
 	lock_release();
 
+	if (blockMemoryPtr == nullptr)
+		return nullptr;
 	// Set the block Allocator* within the raw memory block region
 	void* clientsMemoryPtr = set_block_allocator(blockMemoryPtr, allocator);
 	return clientsMemoryPtr;
@@ -356,27 +401,35 @@ extern "C" void *xrealloc(void *oldMem, size_t size)
 		xfree(oldMem);
 		return 0;
 	}
-	else 
+	
+	/* There is no need to actually do allocation
+	 * if the new size is still within the block */
+	Allocator *oldAllocator = get_block_allocator(oldMem);
+	size_t this_block_size = oldAllocator->GetBlockSize();
+	if (size + sizeof(Allocator*) <= this_block_size && size + sizeof(Allocator*) > this_block_size / 2)
+		return oldMem;
+
+	/* Create a new memory block and free the old one
+	 * if the new requested size exceeds current block, 
+	 * OR is eligible for a shrink (new size < 1/2 of block size) */
+	void* newMem = xmalloc(size);
+	if (newMem != 0) 
 	{
-		// Create a new memory block
-		void* newMem = xmalloc(size);
-		if (newMem != 0) 
-		{
-			// Get the original allocator instance from the old memory block
-			Allocator* oldAllocator = get_block_allocator(oldMem);
-			size_t oldSize = oldAllocator->GetBlockSize() - sizeof(Allocator*);
+		// Get the original allocator instance from the old memory block
+		Allocator* oldAllocator = get_block_allocator(oldMem);
+		size_t oldSize = oldAllocator->GetBlockSize() - sizeof(Allocator*);
 
-			// Copy the bytes from the old memory block into the new (as much as will fit)
-			memcpy(newMem, oldMem, (oldSize < size) ? oldSize : size);
+		// Copy the bytes from the old memory block into the new (as much as will fit)
+		memcpy(newMem, oldMem, (oldSize < size) ? oldSize : size);
 
-			// Free the old memory block
-			xfree(oldMem);
+		// Free the old memory block
+		xfree(oldMem);
 
-			// Return the client pointer to the new memory block
-			return newMem;
-		}
-		return 0;
+		// Return the client pointer to the new memory block
+		return newMem;
 	}
+	return 0;
+	
 }
 
 /// Output xallocator usage statistics
@@ -384,18 +437,32 @@ extern "C" void xalloc_stats()
 {
 	lock_get();
 
-	for (INT i=0; i<MAX_ALLOCATORS; i++)
-	{
-		if (_allocators[i] == 0)
-			break;
+	size_t total_avail = 0;
+	/* Primary info */
+	size_t primary_blocks = my->primary.GetBlockCount();
+	size_t primary_used = my->primary.GetBlocksInUse();
+	size_t primary_free = primary_blocks - primary_used;
+	printf("Primary block (Size = %zu): %u Used, %u Free, %u Total\n",
+	       my->primary.GetBlockSize(), primary_used, primary_free,
+	       primary_blocks);
+	total_avail += my->primary.GetBlockSize() * primary_free;
 
-		if (_allocators[i]->GetName() != NULL)
-			cout << _allocators[i]->GetName();
-		cout << " Block Size: " << _allocators[i]->GetBlockSize();
-		cout << " Block Count: " << _allocators[i]->GetBlockCount();
-		cout << " Blocks In Use: " << _allocators[i]->GetBlocksInUse();
-		cout << endl;
+	/* Secondary info */
+	for (int i = my->n_headers - 1; i >= 0; --i) {
+		PoolListHeader header = my->secondary_headers[i];
+		printf("Secondary block (Size = %zu): ", header.capacity);
+		size_t total_blocks = 0, used = 0, free = 0;
+		for (PoolListNode *node = header.next; node; node = node->next) {
+			total_blocks += node->allocator->GetBlockCount();
+			used += node->allocator->GetBlocksInUse();
+		}
+		free = total_blocks - used;
+		total_avail += header.capacity * free;
+		printf("%u Used, %u Free, %u Total\n", used, free, total_blocks);
 	}
+
+	printf("Memory pool size = %zu bytes, available %zu bytes",
+	       my->primary.GetBlockCount() * my->blocksize, total_avail);
 
 	lock_release();
 }

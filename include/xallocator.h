@@ -21,6 +21,8 @@ struct PoolListHeader {
 };
 
 struct XAllocState {
+    /* The largest block size */
+    size_t blocksize;
     /* Primary pool allocator, block size is set to the largest */
     Allocator primary;
     /* A pool of secondary allocators
