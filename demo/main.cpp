@@ -13,17 +13,10 @@ class MyClass
 {
 	XALLOCATOR
 	// remaining class definition
-};
-
-class MyClassStatic
-{
-public:
-	MyClassStatic() { memory = xmalloc(100); }
-	~MyClassStatic() { xfree(memory); }
 private:
-	void* memory;
+	unsigned long demo_var;
+	long double demo_float;
 };
-static MyClassStatic myClassStatic;
 
 static void out_of_memory()
 {
@@ -48,9 +41,11 @@ int main(void)
 	srand(1);
 	std::set_new_handler(out_of_memory);
 
-	// If AUTOMATIC_XALLOCATOR_INIT_DESTROY defined then XallocInitDestroy() will 
-	// call xalloc_init() automatically before main(). 
-	//xalloc_init();	
+	size_t mem_needed = calc_required_memsize(4096 * 1024, 4096);
+	printf("%zu bytes of memory is needed for a 4MB data pool\n", mem_needed);
+	void *pool = malloc(mem_needed);
+	assert(pool);
+	xalloc_init(4096 * 1024, 4096, pool);
 
 	// Allocate MyClass using fixed block allocator
 	MyClass* myClass = new MyClass();
