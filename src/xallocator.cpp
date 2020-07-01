@@ -190,6 +190,7 @@ Allocator *new_secondary_allocator(size_t size)
 
 	new (sec_allocator) Allocator(size, my->blocksize / size, pool,
 		"secondary allocator");
+	return sec_allocator;
 }
 
 PoolListNode *new_secondary_node(size_t size, PoolListNode **nodeptr)
@@ -281,7 +282,7 @@ extern "C" void xalloc_init(size_t data_capacity, size_t blocksize, void *user_p
 {
 	lock_init();
 	memory = user_pool;
-	char *datapool = static_cast<char *>(memory) + sizeof(Allocator);
+	char *datapool = static_cast<char *>(memory) + sizeof(XAllocState);
 	my = static_cast<XAllocState *>(user_pool);
 #endif
 
@@ -298,7 +299,7 @@ extern "C" void xalloc_init(size_t data_capacity, size_t blocksize, void *user_p
 	char *sec_nodes_pool = secondary_pool + sizeof(Allocator) * nblocks;
 	new (&my->secondary_nodes) Allocator(sizeof(PoolListNode), nblocks,
 		sec_nodes_pool, "Allocators for secondary list nodes");
-	my->n_headers = BITS_TO_REPRESENT(blocksize) - 3;
+	my->n_headers = BITS_TO_REPRESENT(blocksize) - 4;
 	my->secondary_headers = new (sec_nodes_pool + sizeof(PoolListNode) * nblocks) PoolListHeader();
 	for (int i = 0; i < my->n_headers; ++i) {
 		my->secondary_headers[i].capacity = (8 << i);

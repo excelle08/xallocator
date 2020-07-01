@@ -26,6 +26,7 @@ Allocator::Allocator(size_t size, UINT objects, CHAR* memory, const CHAR* name) 
 		{
 			m_pPool = memory;
 			m_allocatorMode = STATIC_POOL;
+			m_blockCnt = objects;
 		}
 		else 
 		{
