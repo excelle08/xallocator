@@ -2,11 +2,9 @@
 #include "DataTypes.h"
 #include <assert.h>
 
-#if defined(_WIN32) || defined (_WIN64)
+#if defined(_WIN32) || defined(_WIN64)
 #include <debugapi.h>
-void trap() {
-  DebugBreak();
-}
+void trap() { DebugBreak(); }
 #else
 #include <signal.h>
 void trap() {
@@ -21,10 +19,9 @@ void trap() {
 //----------------------------------------------------------------------------
 // FaultHandler
 //----------------------------------------------------------------------------
-void FaultHandler(const char* file, unsigned short line)
-{
-	// If you hit this line, it means one of the ASSERT macros failed.
+void FaultHandler(const char* file, unsigned short line) {
+  // If you hit this line, it means one of the ASSERT macros failed.
   trap();
 
-	assert(0);
+  assert(0);
 }

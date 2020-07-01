@@ -9,19 +9,17 @@
 // the debugger use this option:
 // Debugging > Environment _NO_DEBUG_HEAP=1
 
-class MyClass 
-{
-	XALLOCATOR
-	// remaining class definition
-private:
-	unsigned long demo_var;
-	long double demo_float;
+class MyClass {
+  XALLOCATOR
+  // remaining class definition
+ private:
+  unsigned long demo_var;
+  long double demo_float;
 };
 
-static void out_of_memory()
-{
-	// new-handler function called by Allocator when pool is out of memory
-	ASSERT();
+static void out_of_memory() {
+  // new-handler function called by Allocator when pool is out of memory
+  ASSERT();
 }
 
 static const int MAX_BLOCK_SIZE = 4000;
@@ -36,118 +34,118 @@ void Benchmark(const char* name, AllocFunc allocFunc, DeallocFunc deallocFunc);
 //------------------------------------------------------------------------------
 // _tmain
 //------------------------------------------------------------------------------
-int main(void)
-{
-	srand(1);
-	std::set_new_handler(out_of_memory);
+int main(void) {
+  srand(1);
+  std::set_new_handler(out_of_memory);
 
-	size_t mem_needed = calc_required_memsize(4096 * 1024, 4096);
-	printf("%zu bytes of memory is needed for a 4MB data pool\n", mem_needed);
-	void *pool = malloc(mem_needed);
-	assert(pool);
-	xalloc_init(4096 * 1024, 4096, pool);
+  size_t mem_needed = calc_required_memsize(4096 * 1024, 4096);
+  printf("%zu bytes of memory is needed for a 4MB data pool\n", mem_needed);
+  void* pool = malloc(mem_needed);
+  assert(pool);
+  xalloc_init(4096 * 1024, 4096, pool);
 
-	// Allocate MyClass using fixed block allocator
-	MyClass* myClass = new MyClass();
-	delete myClass;
+  // Allocate MyClass using fixed block allocator
+  MyClass* myClass = new MyClass();
+  delete myClass;
 
-	void* memory1 = xmalloc(100);	
-	xfree(memory1);
+  void* memory1 = xmalloc(100);
+  xfree(memory1);
 
-	char* memory2 = (char*)xmalloc(24);	
-	strcpy(memory2, "TEST STRING");
-	memory2 = (char*)xrealloc(memory2, 124);
-	xfree(memory2);
-	
-	// Benchmark will cause out_of_memory to be called if STATIC_POOLS defined
-	Benchmark("malloc/free (Run 1)", malloc, free);
-	Benchmark("malloc/free (Run 2)", malloc, free);
-	Benchmark("malloc/free (Run 3)", malloc, free);
-	Benchmark("xmalloc/xfree (Run 1)", xmalloc, xfree);
-	Benchmark("xmalloc/xfree (Run 2)", xmalloc, xfree);
-	Benchmark("xmalloc/xfree (Run 3)", xmalloc, xfree);
+  char* memory2 = (char*)xmalloc(24);
+  strcpy(memory2, "TEST STRING");
+  memory2 = (char*)xrealloc(memory2, 124);
+  xfree(memory2);
 
-	xalloc_stats();
+  // Benchmark will cause out_of_memory to be called if STATIC_POOLS defined
+  Benchmark("malloc/free (Run 1)", malloc, free);
+  Benchmark("malloc/free (Run 2)", malloc, free);
+  Benchmark("malloc/free (Run 3)", malloc, free);
+  Benchmark("xmalloc/xfree (Run 1)", xmalloc, xfree);
+  Benchmark("xmalloc/xfree (Run 2)", xmalloc, xfree);
+  Benchmark("xmalloc/xfree (Run 3)", xmalloc, xfree);
 
-	// If AUTOMATIC_XALLOCATOR_INIT_DESTROY is defined, ~XallocDestroy() will call 
-	// xalloc_destroy() automatically. Never call xalloc_destroy() manually except if
-	// using xallocator in a C-only application. 
-	//xalloc_destroy();
-	return 0;
+  xalloc_stats();
+
+  // If AUTOMATIC_XALLOCATOR_INIT_DESTROY is defined, ~XallocDestroy() will call
+  // xalloc_destroy() automatically. Never call xalloc_destroy() manually except
+  // if using xallocator in a C-only application.
+  // xalloc_destroy();
+  return 0;
 }
 
 //------------------------------------------------------------------------------
 // Benchmark
 //------------------------------------------------------------------------------
-void Benchmark(const char* name, AllocFunc allocFunc, DeallocFunc deallocFunc)
-{
+void Benchmark(const char* name, AllocFunc allocFunc, DeallocFunc deallocFunc) {
 #if WIN32
-	LARGE_INTEGER StartingTime, EndingTime, ElapsedMicroseconds, TotalElapsedMicroseconds= {0};
-	LARGE_INTEGER Frequency;
+  LARGE_INTEGER StartingTime, EndingTime, ElapsedMicroseconds,
+      TotalElapsedMicroseconds = {0};
+  LARGE_INTEGER Frequency;
 
-	SetProcessPriorityBoost(GetCurrentProcess(), true);
+  SetProcessPriorityBoost(GetCurrentProcess(), true);
 
-	QueryPerformanceFrequency(&Frequency); 
+  QueryPerformanceFrequency(&Frequency);
 
-	// Allocate MAX_ALLOCATIONS blocks MAX_BLOCK_SIZE / 2 sized blocks
-	QueryPerformanceCounter(&StartingTime);
-	for (int i=0; i<MAX_ALLOCATIONS; i++)
-		memoryPtrs[i] = allocFunc(MAX_BLOCK_SIZE / 2);
-	QueryPerformanceCounter(&EndingTime);
-	ElapsedMicroseconds.QuadPart = EndingTime.QuadPart - StartingTime.QuadPart;
-	ElapsedMicroseconds.QuadPart *= 1000000;
-	ElapsedMicroseconds.QuadPart /= Frequency.QuadPart;
-	std::cout << name << " allocate time: " << ElapsedMicroseconds.QuadPart << std::endl;
-	TotalElapsedMicroseconds.QuadPart += ElapsedMicroseconds.QuadPart;
+  // Allocate MAX_ALLOCATIONS blocks MAX_BLOCK_SIZE / 2 sized blocks
+  QueryPerformanceCounter(&StartingTime);
+  for (int i = 0; i < MAX_ALLOCATIONS; i++)
+    memoryPtrs[i] = allocFunc(MAX_BLOCK_SIZE / 2);
+  QueryPerformanceCounter(&EndingTime);
+  ElapsedMicroseconds.QuadPart = EndingTime.QuadPart - StartingTime.QuadPart;
+  ElapsedMicroseconds.QuadPart *= 1000000;
+  ElapsedMicroseconds.QuadPart /= Frequency.QuadPart;
+  std::cout << name << " allocate time: " << ElapsedMicroseconds.QuadPart
+            << std::endl;
+  TotalElapsedMicroseconds.QuadPart += ElapsedMicroseconds.QuadPart;
 
-	// Deallocate MAX_ALLOCATIONS blocks (every other one)
-	QueryPerformanceCounter(&StartingTime);
-	for (int i=0; i<MAX_ALLOCATIONS; i+=2)
-		deallocFunc(memoryPtrs[i]);
-	QueryPerformanceCounter(&EndingTime);
-	ElapsedMicroseconds.QuadPart = EndingTime.QuadPart - StartingTime.QuadPart;
-	ElapsedMicroseconds.QuadPart *= 1000000;
-	ElapsedMicroseconds.QuadPart /= Frequency.QuadPart;
-	std::cout << name << " deallocate time: " << ElapsedMicroseconds.QuadPart << std::endl;
-	TotalElapsedMicroseconds.QuadPart += ElapsedMicroseconds.QuadPart;
+  // Deallocate MAX_ALLOCATIONS blocks (every other one)
+  QueryPerformanceCounter(&StartingTime);
+  for (int i = 0; i < MAX_ALLOCATIONS; i += 2) deallocFunc(memoryPtrs[i]);
+  QueryPerformanceCounter(&EndingTime);
+  ElapsedMicroseconds.QuadPart = EndingTime.QuadPart - StartingTime.QuadPart;
+  ElapsedMicroseconds.QuadPart *= 1000000;
+  ElapsedMicroseconds.QuadPart /= Frequency.QuadPart;
+  std::cout << name << " deallocate time: " << ElapsedMicroseconds.QuadPart
+            << std::endl;
+  TotalElapsedMicroseconds.QuadPart += ElapsedMicroseconds.QuadPart;
 
-	// Allocate MAX_ALLOCATIONS blocks MAX_BLOCK_SIZE sized blocks
-	QueryPerformanceCounter(&StartingTime);
-	for (int i=0; i<MAX_ALLOCATIONS; i++)
-		memoryPtrs2[i] = allocFunc(MAX_BLOCK_SIZE);
-	QueryPerformanceCounter(&EndingTime);
-	ElapsedMicroseconds.QuadPart = EndingTime.QuadPart - StartingTime.QuadPart;
-	ElapsedMicroseconds.QuadPart *= 1000000;
-	ElapsedMicroseconds.QuadPart /= Frequency.QuadPart;
-	std::cout << name << " allocate time: " << ElapsedMicroseconds.QuadPart << std::endl;
-	TotalElapsedMicroseconds.QuadPart += ElapsedMicroseconds.QuadPart;
+  // Allocate MAX_ALLOCATIONS blocks MAX_BLOCK_SIZE sized blocks
+  QueryPerformanceCounter(&StartingTime);
+  for (int i = 0; i < MAX_ALLOCATIONS; i++)
+    memoryPtrs2[i] = allocFunc(MAX_BLOCK_SIZE);
+  QueryPerformanceCounter(&EndingTime);
+  ElapsedMicroseconds.QuadPart = EndingTime.QuadPart - StartingTime.QuadPart;
+  ElapsedMicroseconds.QuadPart *= 1000000;
+  ElapsedMicroseconds.QuadPart /= Frequency.QuadPart;
+  std::cout << name << " allocate time: " << ElapsedMicroseconds.QuadPart
+            << std::endl;
+  TotalElapsedMicroseconds.QuadPart += ElapsedMicroseconds.QuadPart;
 
-	// Deallocate MAX_ALLOCATIONS blocks (every other one)
-	QueryPerformanceCounter(&StartingTime);
-	for (int i=1; i<MAX_ALLOCATIONS; i+=2)
-		deallocFunc(memoryPtrs[i]);
-	QueryPerformanceCounter(&EndingTime);
-	ElapsedMicroseconds.QuadPart = EndingTime.QuadPart - StartingTime.QuadPart;
-	ElapsedMicroseconds.QuadPart *= 1000000;
-	ElapsedMicroseconds.QuadPart /= Frequency.QuadPart;
-	std::cout << name << " deallocate time: " << ElapsedMicroseconds.QuadPart << std::endl;
-	TotalElapsedMicroseconds.QuadPart += ElapsedMicroseconds.QuadPart;
+  // Deallocate MAX_ALLOCATIONS blocks (every other one)
+  QueryPerformanceCounter(&StartingTime);
+  for (int i = 1; i < MAX_ALLOCATIONS; i += 2) deallocFunc(memoryPtrs[i]);
+  QueryPerformanceCounter(&EndingTime);
+  ElapsedMicroseconds.QuadPart = EndingTime.QuadPart - StartingTime.QuadPart;
+  ElapsedMicroseconds.QuadPart *= 1000000;
+  ElapsedMicroseconds.QuadPart /= Frequency.QuadPart;
+  std::cout << name << " deallocate time: " << ElapsedMicroseconds.QuadPart
+            << std::endl;
+  TotalElapsedMicroseconds.QuadPart += ElapsedMicroseconds.QuadPart;
 
-	// Deallocate MAX_ALLOCATIONS blocks 
-	QueryPerformanceCounter(&StartingTime);
-	for (int i=MAX_ALLOCATIONS-1; i>=0; i--)
-		deallocFunc(memoryPtrs2[i]);
-	QueryPerformanceCounter(&EndingTime);
-	ElapsedMicroseconds.QuadPart = EndingTime.QuadPart - StartingTime.QuadPart;
-	ElapsedMicroseconds.QuadPart *= 1000000;
-	ElapsedMicroseconds.QuadPart /= Frequency.QuadPart;
-	std::cout << name << " deallocate time: " << ElapsedMicroseconds.QuadPart << std::endl;
-	TotalElapsedMicroseconds.QuadPart += ElapsedMicroseconds.QuadPart;
+  // Deallocate MAX_ALLOCATIONS blocks
+  QueryPerformanceCounter(&StartingTime);
+  for (int i = MAX_ALLOCATIONS - 1; i >= 0; i--) deallocFunc(memoryPtrs2[i]);
+  QueryPerformanceCounter(&EndingTime);
+  ElapsedMicroseconds.QuadPart = EndingTime.QuadPart - StartingTime.QuadPart;
+  ElapsedMicroseconds.QuadPart *= 1000000;
+  ElapsedMicroseconds.QuadPart /= Frequency.QuadPart;
+  std::cout << name << " deallocate time: " << ElapsedMicroseconds.QuadPart
+            << std::endl;
+  TotalElapsedMicroseconds.QuadPart += ElapsedMicroseconds.QuadPart;
 
-	std::cout << name << " TOTAL TIME: " << TotalElapsedMicroseconds.QuadPart << std::endl;
+  std::cout << name << " TOTAL TIME: " << TotalElapsedMicroseconds.QuadPart
+            << std::endl;
 
-	SetProcessPriorityBoost(GetCurrentProcess(), false);
+  SetProcessPriorityBoost(GetCurrentProcess(), false);
 #endif
 }
-
-
