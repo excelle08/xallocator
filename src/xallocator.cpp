@@ -15,34 +15,45 @@ using namespace std;
 static std::mutex _criticalSection; 
 static BOOL _xallocInitialized = FALSE;
 
+XAllocState *my;
+void *memory;
+
 // Define STATIC_POOLS to switch from heap blocks mode to static pools mode
-//#define STATIC_POOLS 
+#define STATIC_POOLS 
 #ifdef STATIC_POOLS
 	// Update this section as necessary if you want to use static memory pools.
 	// See also xalloc_init() and xalloc_destroy() for additional updates required.
-	#define MAX_ALLOCATORS	12
-	#define MAX_BLOCKS		32
+	/* Maximum block size, defaults to 4096 (unit: bytes) */
+	#ifndef BLOCKSZ
+	#define BLOCKSZ		4096
+	#endif
+
+	/* Capacity of data region, defaults to 16384 (unit: Kbytes) */
+	#ifndef DATA_CAP
+	#define DATA_CAP	16384
+	#endif
+
+	/* Validate BLOCKSZ and DATA_CAP */
+	#if DATA_CAP % BLOCKSZ != 0
+	#error DATA_CAP must be a multiple of BLOCKSZ
+	#endif
+	#if (BLOCKSZ & (BLOCKSZ - 1)) != 0
+	#error BLOCKSZ must be a power of 2
+	#endif
 
 	// Create static storage for each static allocator instance
-	CHAR* _allocator8 [sizeof(AllocatorPool<CHAR[8], MAX_BLOCKS>)];
-	CHAR* _allocator16 [sizeof(AllocatorPool<CHAR[16], MAX_BLOCKS>)];
-	CHAR* _allocator32 [sizeof(AllocatorPool<CHAR[32], MAX_BLOCKS>)];
-	CHAR* _allocator64 [sizeof(AllocatorPool<CHAR[64], MAX_BLOCKS>)];
-	CHAR* _allocator128 [sizeof(AllocatorPool<CHAR[128], MAX_BLOCKS>)];
-	CHAR* _allocator256 [sizeof(AllocatorPool<CHAR[256], MAX_BLOCKS>)];
-	CHAR* _allocator396 [sizeof(AllocatorPool<CHAR[396], MAX_BLOCKS>)];
-	CHAR* _allocator512 [sizeof(AllocatorPool<CHAR[512], MAX_BLOCKS>)];
-	CHAR* _allocator768 [sizeof(AllocatorPool<CHAR[768], MAX_BLOCKS>)];
-	CHAR* _allocator1024 [sizeof(AllocatorPool<CHAR[1024], MAX_BLOCKS>)];
-	CHAR* _allocator2048 [sizeof(AllocatorPool<CHAR[2048], MAX_BLOCKS>)];	
-	CHAR* _allocator4096 [sizeof(AllocatorPool<CHAR[4096], MAX_BLOCKS>)];
+	/* Calculate total pool size */
+	#define NBLOCKS		(DATA_CAP * 1024 / BLOCKSZ)
+	/* Headers are for 8, 16, 32, 64, ..., BLOCKSZ/2 */
+	#define NHEADERS	(BITS_TO_REPRESENT(BLOCKSZ) - 3)
+	#define POOL_SIZE	DATA_CAP * 1024 \
+				+ sizeof(Allocator) * NBLOCKS \
+				+ sizeof(PoolListNode) * NBLOCKS \
+				+ sizeof(PoolListHeader) * NHEADERS
 
-	// Array of pointers to all allocator instances
-	static Allocator* _allocators[MAX_ALLOCATORS];
+	CHAR _static_pool [POOL_SIZE];
+	XAllocState _static_xalloc_state;
 
-#else
-	#define MAX_ALLOCATORS  15
-	static Allocator* _allocators[MAX_ALLOCATORS];
 #endif	// STATIC_POOLS
 
 // For C++ applications, must define AUTOMATIC_XALLOCATOR_INIT_DESTROY to 
@@ -199,66 +210,54 @@ static inline void insert_allocator(Allocator* allocator)
 
 /// This function must be called exactly one time *before* any other xallocator
 /// API is called. XallocInitDestroy constructor calls this function automatically. 
+#ifdef STATIC_POOLS
 extern "C" void xalloc_init()
 {
 	lock_init();
-
-#ifdef STATIC_POOLS
-	// For STATIC_POOLS mode, the allocators must be initialized before any other
-	// static user class constructor is run. Therefore, use placement new to initialize
-	// each allocator into the previously reserved static memory locations.
-	new (&_allocator8) AllocatorPool<CHAR[8], MAX_BLOCKS>();
-	new (&_allocator16) AllocatorPool<CHAR[16], MAX_BLOCKS>();
-	new (&_allocator32) AllocatorPool<CHAR[32], MAX_BLOCKS>();
-	new (&_allocator64) AllocatorPool<CHAR[64], MAX_BLOCKS>();
-	new (&_allocator128) AllocatorPool<CHAR[128], MAX_BLOCKS>();
-	new (&_allocator256) AllocatorPool<CHAR[256], MAX_BLOCKS>();
-	new (&_allocator396) AllocatorPool<CHAR[396], MAX_BLOCKS>();
-	new (&_allocator512) AllocatorPool<CHAR[512], MAX_BLOCKS>();
-	new (&_allocator768) AllocatorPool<CHAR[768], MAX_BLOCKS>();
-	new (&_allocator1024) AllocatorPool<CHAR[1024], MAX_BLOCKS>();
-	new (&_allocator2048) AllocatorPool<CHAR[2048], MAX_BLOCKS>();
-	new (&_allocator4096) AllocatorPool<CHAR[4096], MAX_BLOCKS>();
-
-	// Populate allocator array with all instances 
-	_allocators[0] = (Allocator*)&_allocator8;
-	_allocators[1] = (Allocator*)&_allocator16;
-	_allocators[2] = (Allocator*)&_allocator32;
-	_allocators[3] = (Allocator*)&_allocator64;
-	_allocators[4] = (Allocator*)&_allocator128;
-	_allocators[5] = (Allocator*)&_allocator256;
-	_allocators[6] = (Allocator*)&_allocator396;
-	_allocators[7] = (Allocator*)&_allocator512;
-	_allocators[8] = (Allocator*)&_allocator768;
-	_allocators[9] = (Allocator*)&_allocator1024;
-	_allocators[10] = (Allocator*)&_allocator2048;
-	_allocators[11] = (Allocator*)&_allocator4096;
+	memory = _static_pool;
+	size_t data_capacity = DATA_CAP * 1024;
+	size_t blocksize = BLOCKSZ;
+	
+	char *datapool = memory;
+	my = new (&_static_xalloc_state) XAllocState();
+#else
+extern "C" void xalloc_init(size_t data_capacity, size_t blocksize, void *user_pool)
+{
+	lock_init();
+	memory = user_pool;
+	char *datapool = memory + sizeof(Allocator);
+	my = new (user_pool) XAllocState();
 #endif
+
+	size_t nblocks = data_capacity / blocksize;
+	/* Initialize primary allocator */
+	my->primary = Allocator(blocksize, nblocks, datapool,
+				"Primary allocator");
+	/* Secondaries */
+	char *secondary_pool = datapool + data_capacity;
+	my->secondaries = Allocator(sizeof(Allocator), nblocks, secondary_pool,
+				    "Allocator of secondary allocators");
+	char *sec_nodes_pool = secondary_pool + sizeof(Allocator) * nblocks;
+	my->secondary_nodes = Allocator(sizeof(PoolListNode), nblocks,
+		sec_nodes_pool, "Allocators for secondary list nodes");
+	my->n_headers = BITS_TO_REPRESENT(blocksize) - 3;
+	my->secondary_headers = sec_nodes_pool + sizeof(PoolListNode) * nblocks;
+	for (int i = 0; i < my->n_headers; ++i) {
+		my->secondary_headers[i].capacity = (8 << i);
+		my->secondary_headers[i].next = nullptr;
+	}
 }
 
 /// Called one time when the application exits to cleanup any allocated memory.
 /// ~XallocInitDestroy destructor calls this function automatically. 
 extern "C" void xalloc_destroy()
 {
-	lock_get();
-
-#ifdef STATIC_POOLS
-	for (INT i=0; i<MAX_ALLOCATORS; i++)
-	{
-		_allocators[i]->~Allocator();
-		_allocators[i] = 0;
-	}
-#else
-	for (INT i=0; i<MAX_ALLOCATORS; i++)
-	{
-		if (_allocators[i] == 0)
-			break;
-		delete _allocators[i];
-		_allocators[i] = 0;
-	}
-#endif
-
-	lock_release();
+	/* Let's not do anything here due to the following consideration:
+	 * 1. When the whole process exits the kernel will reclaim all the memory
+	 *    anyway. This apply to both static pool and user-provided pool.
+	 * 2. If the pool is user provided, we can't just call free() or delete
+	 *    on it because the pool may also be mmap'ed.
+	 */ 
 
 	lock_destroy();
 }
