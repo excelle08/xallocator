@@ -178,11 +178,11 @@ static inline void *get_block_ptr(void* block)
 /* Create a new secondary allocator */
 Allocator *new_secondary_allocator(size_t size)
 {
-	char *pool = my->primary.Allocate(my->blocksize);
+	char *pool = static_cast<char *>(my->primary.Allocate(my->blocksize));
 	if (pool == nullptr)
 		return nullptr;
 
-	Allocator *sec_allocator = my->secondaries.Allocate(sizeof(Allocator));
+	Allocator *sec_allocator = static_cast<Allocator *>(my->secondaries.Allocate(sizeof(Allocator)));
 	if (sec_allocator == nullptr) {
 		my->primary.Deallocate(pool);
 		return nullptr;
@@ -194,9 +194,7 @@ Allocator *new_secondary_allocator(size_t size)
 
 PoolListNode *new_secondary_node(size_t size, PoolListNode **nodeptr)
 {
-	PoolListNode *newnode = my->secondary_nodes.Allocate(
-		sizeof(PoolListNode)
-	);
+	PoolListNode *newnode = static_cast<PoolListNode *>(my->secondary_nodes.Allocate(sizeof(PoolListNode)));
 	/* If we can't get room for a new node, we won't be
 	 * able to get a new secondary allocator either */
 	if (newnode == nullptr)
@@ -224,7 +222,7 @@ Allocator* find_allocator(size_t size)
 
 	PoolListHeader *chain = nullptr;
 	for (int i = 0; i < my->n_headers; ++i) {
-		if (my->secondary_headers[i] >= size) {
+		if (my->secondary_headers[i].capacity >= size) {
 			chain = my->secondary_headers + i;
 			break;
 		}
@@ -277,30 +275,31 @@ extern "C" void xalloc_init()
 	size_t blocksize = BLOCKSZ;
 	
 	char *datapool = memory;
-	my = new (&_static_xalloc_state) XAllocState();
+	my = new (&_static_xalloc_state) XAllocState;
 #else
 extern "C" void xalloc_init(size_t data_capacity, size_t blocksize, void *user_pool)
 {
 	lock_init();
 	memory = user_pool;
-	char *datapool = memory + sizeof(Allocator);
-	my = new (user_pool) XAllocState();
+	char *datapool = static_cast<char *>(memory) + sizeof(Allocator);
+	my = static_cast<XAllocState *>(user_pool);
 #endif
 
 	size_t nblocks = data_capacity / blocksize;
 	/* Initialize primary allocator */
 	my->blocksize = blocksize;
-	my->primary = Allocator(blocksize, nblocks, datapool,
-				"Primary allocator");
+	new (&my->primary) Allocator(blocksize, nblocks, datapool,
+				     "Primary allocator");
 	/* Secondaries */
 	char *secondary_pool = datapool + data_capacity;
-	my->secondaries = Allocator(sizeof(Allocator), nblocks, secondary_pool,
-				    "Allocator of secondary allocators");
+	new (&my->secondaries) Allocator(sizeof(Allocator), nblocks,
+					 secondary_pool,
+					 "Allocator of secondary allocators");
 	char *sec_nodes_pool = secondary_pool + sizeof(Allocator) * nblocks;
-	my->secondary_nodes = Allocator(sizeof(PoolListNode), nblocks,
+	new (&my->secondary_nodes) Allocator(sizeof(PoolListNode), nblocks,
 		sec_nodes_pool, "Allocators for secondary list nodes");
 	my->n_headers = BITS_TO_REPRESENT(blocksize) - 3;
-	my->secondary_headers = sec_nodes_pool + sizeof(PoolListNode) * nblocks;
+	my->secondary_headers = new (sec_nodes_pool + sizeof(PoolListNode) * nblocks) PoolListHeader();
 	for (int i = 0; i < my->n_headers; ++i) {
 		my->secondary_headers[i].capacity = (8 << i);
 		my->secondary_headers[i].next = nullptr;
@@ -442,7 +441,7 @@ extern "C" void xalloc_stats()
 	size_t primary_blocks = my->primary.GetBlockCount();
 	size_t primary_used = my->primary.GetBlocksInUse();
 	size_t primary_free = primary_blocks - primary_used;
-	printf("Primary block (Size = %zu): %u Used, %u Free, %u Total\n",
+	printf("Primary block (Size = %zu): %zu Used, %zu Free, %zu Total\n",
 	       my->primary.GetBlockSize(), primary_used, primary_free,
 	       primary_blocks);
 	total_avail += my->primary.GetBlockSize() * primary_free;
@@ -458,7 +457,7 @@ extern "C" void xalloc_stats()
 		}
 		free = total_blocks - used;
 		total_avail += header.capacity * free;
-		printf("%u Used, %u Free, %u Total\n", used, free, total_blocks);
+		printf("%zu Used, %zu Free, %zu Total\n", used, free, total_blocks);
 	}
 
 	printf("Memory pool size = %zu bytes, available %zu bytes",
