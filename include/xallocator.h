@@ -92,8 +92,8 @@ static inline size_t calc_required_memsize(size_t capacity, size_t blocksize)
 
     size_t total = capacity;
     size_t nblocks = capacity / blocksize;
-    /* Space for the primary allocator itself and the pool of secondaries */
-    total += sizeof(Allocator) * 2;
+    /* Space for XAllocState (the primary allocator itself and the pool object of secondaries) */
+    total += sizeof(XAllocState);
     /* Space for potential secondary allocators */
     total += sizeof(Allocator) * nblocks;
     /* Space for secondary list nodes */
@@ -113,7 +113,11 @@ static inline size_t calc_required_memsize(size_t capacity, size_t blocksize)
 /// Embedded systems that never exit can call xalloc_init() manually at startup
 /// and eliminate XallocInitDestroy usage. When the system is still single threaded at 
 /// startup, the xallocator API does not need mutex protection.
+#ifdef STATIC_POOLS
 void xalloc_init();
+#else
+void xalloc_init(size_t data_capacity, size_t blocksize, void *memory);
+#endif
 
 /// This function must be called once when the application exits.  Never call xalloc_destroy() 
 /// manually except if using xallocator in a C-only application. If using xallocator 
